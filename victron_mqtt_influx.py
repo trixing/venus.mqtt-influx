@@ -5,13 +5,16 @@ from datetime import datetime
 import time
 import queue
 import threading
+import sys
+from collections import defaultdict
+#import defaultdict
 
 
 DB='victron'
 
 class MqttToInflux:
    def __init__(self):
-    self._points = queue.Queue()
+    self._points = queue.Queue(maxsize=10000)
     self._msg_count = 0
     self._msg_ignored = 0
 
@@ -44,6 +47,7 @@ class MqttToInflux:
         self._msg_ignored += 1
         return
     v = float(v)  # automatic conversion sometimes makes it an int
+    # print(m, v)
     point = {
         "measurement": m,
         "tags": {
@@ -56,28 +60,69 @@ class MqttToInflux:
             "value": v
         }
         }
-    self._points.put(point)
+    try:
+        self._points.put(point, block=False)
+    except queue.Full:
+        print('Queue full')
+        sys.exit(2)
 
    def write(self):
-      points = {}
       lastwrite = time.time()
       deduped = 0
+      points = defaultdict(list)
+      agg = defaultdict(dict)
       while True:
         now = time.time()
         try:
             p = self._points.get(timeout=1)
-            # deduplicate frequent measurements
-            if p['measurement'] in points:
-                deduped += 1
-            points[p['measurement']] = p
+            k = p['measurement'] + '.' + p['tags']['path'] + '.' + p['tags']['portalId'] + '.' + p['tags']['instanceNumber']
+            parts = p['measurement'].split('.')
+            i = None
+            if 'L1' in parts:
+                i = parts.index('L1')
+            if 'L2' in parts:
+                i = parts.index('L2')
+            if 'L3' in parts:
+                i = parts.index('L3')
+            if i is not None:
+                what = parts[i+1]
+                ks = k.replace('L1', 'Lx').replace('L2', 'Lx').replace('L3', 'Lx')
+                # print(ks, what)
+                if what in ('Power', 'Current', 'Voltage', 'Energy', 'I', 'P', 'V'):
+                    agg[ks][parts[i]] = p
+                #else:
+                #    print('ignored', what, ks)
+                if len(agg[ks]) == 3:
+                    ps = p.copy()
+                    ps['measurement'] = ps['measurement'].replace('L1', 'Lx').replace('L2', 'Lx').replace('L3', 'Lx')
+                    ps['fields']['value'] = sum(v['fields']['value'] for v in agg[ks].values())
+                    if what == 'Voltage' or what == 'V':
+                        ps['fields']['value'] /= 3
+                    # print('new sum', ks, what, ps['fields']['value'])
+                    points[ks].append(ps)
+                    del agg[ks]
+
+                
+            points[k].append(p)
         except queue.Empty:
             pass
         if now - lastwrite > 10:
             if points:
-                print('Write points', len(points), time.time() - now)
-                self._influx.write_points(points.values())
-                points = {}
-            print(self._msg_count, self._msg_ignored, deduped)
+                tbw = []
+                duped = 0
+                for k, ms in points.items():
+                    if '.Power.' in k:
+                        tbw += ms
+                        continue
+                    value = sum(v['fields']['value'] for v in ms) / len(ms)
+                    ms[0]['fields']['value'] = value
+                    duped += len(ms) - 1
+                    tbw.append(ms[0])
+                print('Write points', len(tbw), len(points), duped, time.time() - now)
+                self._influx.write_points(tbw)
+                points = defaultdict(list)
+                # agg = defaultdict(dict) ??
+            print(self._msg_count, self._msg_ignored)
             lastwrite = now
 
 def main():
