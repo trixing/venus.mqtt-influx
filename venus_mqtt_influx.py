@@ -13,7 +13,6 @@ import sys
 import threading
 import time
 from collections import defaultdict
-#import defaultdict
 
 log = logging.getLogger('mqtt_to_influx')
 
@@ -149,7 +148,6 @@ class MqttToInflux:
                 else:
                     log.debug('  Skip write due to dryrun.')
                 points = defaultdict(list)
-                # agg = defaultdict(dict) ??
             log.info('Messages handled: %d, Messages ignored %d' % (self._msg_count, self._msg_ignored))
 
 def main():
