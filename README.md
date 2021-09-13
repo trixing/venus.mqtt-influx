@@ -24,7 +24,7 @@ aggressive downsampling use the included [Example](./influx_example.sql).
 ## Installation (Systemd)
 
 On systemd systems, copy the supplied [Unit File](./venus-mqtt-influx.service.example)
-to /etc/systemd/system/ . Optionally edit the file to add command line
+to `/etc/systemd/system/`. Optionally edit the file to add command line
 arguments and adapt the installation path.
 
 To start the service, issue
