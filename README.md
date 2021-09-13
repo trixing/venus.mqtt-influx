@@ -1,4 +1,4 @@
-# venus.mqtt-influx - A Smart MQTT to Influx Bridge
+# venus.mqtt-influx - A smart MQTT to Influx bridge
 
 This program takes the messages as produced by the dbus-mqtt broker
 in the Venus GX system and transforms them into a format which is
