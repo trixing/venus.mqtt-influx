@@ -12,13 +12,10 @@ from collections import defaultdict
 
 log = logging.getLogger('mqtt_to_influx')
 
-DB='victron'
-INFLUX_HOST='localhost'
-MQTT_HOST='192.168.2.10'
-
 
 class MqttToInflux:
-   def __init__(self, dryrun=False):
+   def __init__(self, mqtt_host='127.0.0.1', influx_host='127.0.0.1',
+                influx_db='venus', dryrun=False):
     self._points = queue.Queue(maxsize=10000)
     self._msg_count = 0
     self._msg_ignored = 0
@@ -29,16 +26,16 @@ class MqttToInflux:
     t.daemon = True
     t.start()
 
-    self._influx = influxdb.InfluxDBClient(host=INFLUX_HOST, port=8086)
+    self._influx = influxdb.InfluxDBClient(host=influx_host, port=8086)
     if not self._dryrun:
-        self._influx.create_database(DB)
-        self._influx.switch_database(DB)
+        self._influx.create_database(influx_db)
+        self._influx.switch_database(influx_db)
 
     self._mqtt = mqtt.Client()
     self._mqtt.on_connect = self.on_connect
     self._mqtt.on_message = self.on_message
     self._mqtt.on_subscribe = self.on_subscribe
-    self._mqtt.connect(MQTT_HOST, 1883, 60)
+    self._mqtt.connect(mqtt_host, 1883, 60)
     self._mqtt.loop_forever()
 
    def on_connect(self, client, userdata, flags, rc):
@@ -163,12 +160,18 @@ def main():
     log.info('Starting up')
 
     import argparse
-    parser = argparse.ArgumentParser(description='Bridge MQTT messages from Venus GX to Influx DB with some smart sampling..')
+    parser = argparse.ArgumentParser(
+            description='Bridge MQTT messages from Venus GX to Influx DB with some smart sampling..')
     parser.add_argument('--dryrun', action='store_true',
                         help='do not publish to influx')
+    parser.add_argument('--mqtt_host', help='MQTT host to connect to', default='127.0.0.1')
+    parser.add_argument('--influx_host', help='Influx host to connect to', default='127.0.0.1')
+    parser.add_argument('--influx_db', help='Influx db to connect to', default='venus')
+
     args = parser.parse_args()
     if args.dryrun:
         log.warning('Running in dryrun mode')
-    MqttToInflux(dryrun=args.dryrun)
+    MqttToInflux(mqtt_host=args.mqtt_host, influx_host=args.influx_host,
+                 influx_db=args.influx_db, dryrun=args.dryrun)
 
 main()
