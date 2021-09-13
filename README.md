@@ -13,7 +13,9 @@ It has some additional features
 - For the phased measurements, L1, L2, L3 it will create another Lx
   datapoint as the sum (for Current and Power) or mean (for Voltage)
   of the values. This again is facilitate easier graphing.
-
+- It will ignore all messages of type string as they change rarely
+- It will send keepalive messages to the MQTT broker, otherwise
+  the GX device will stop sending things our way.
 
 ## Downsampling
 
@@ -56,3 +58,11 @@ Alternatively a template service is provided which you can install by running
 ln -s /data/venus.mqtt-influx/service /service/mqtt-influx
 chmod +x /service/mqtt-influx/run /service/mqtt-influx/log/run
 ```
+
+## Possible improvements
+
+- [ ] Create fake datapoints, some messages are seen rarely and that messes
+      up the graphs, especially for really long gaps. Ideally Venus OS
+      should regularly repeat the messages, but it doesn't. Caveat is that
+      we cannot see if a device is going away. Alternative might be to
+      re-subscribe every ~30 minutes.
