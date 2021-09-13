@@ -25,8 +25,13 @@ class MqttToInflux:
     self._msg_ignored = 0
     self._msg_seen = set()
     self._dryrun = dryrun
+    self._keepalive = set()
 
     t = threading.Thread(target=self.write)
+    t.daemon = True
+    t.start()
+
+    t = threading.Thread(target=self.keepalive)
     t.daemon = True
     t.start()
 
@@ -55,13 +60,17 @@ class MqttToInflux:
     p = t.split('/')
     m = '.'.join(p[4:])
     v = json.loads(msg.payload)['value']
+    if t.endswith('system/0/Serial'):
+        self._keepalive.add(t)
     # print(t, m, v, type(v))
     if type(v) not in [float, int]:
         self._msg_ignored += 1
-        if t not in self._msg_seen:
+        if type(v) == type(None):
+            pass
+        elif t not in self._msg_seen:
             log.info('Ignoring %s of type %s' % (t, type(v)))
             self._msg_seen.add(t)
-        elif type(v) != type(None):
+        else:
             log.debug('Ignoring %s of type %s' % (t, type(v)))
         return
     v = float(v)  # automatic conversion sometimes makes it an int
@@ -83,6 +92,17 @@ class MqttToInflux:
     except queue.Full:
         log.error('Queue full')
         sys.exit(2)
+
+   def keepalive(self):
+       # Wait for the first host to appear, to prevent
+       # startup delay.
+       while not self._keepalive:
+           time.sleep(.1)
+       while True:
+           for t in self._keepalive:
+               log.info('Send keepalive to %s' % t)
+               self._mqtt.publish(t)
+           time.sleep(25)
 
    def write(self):
       lastwrite = time.time()
