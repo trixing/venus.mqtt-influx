@@ -45,8 +45,14 @@ If you want to run the script on the GX device, create a
 named `run`:
 ```
 #!/bin/sh
-python3 /data/venus-mqtt-influx/venus-mqtt-influx.py --influx_host=example.host
+python3 /data/venus.mqtt-influx/venus_mqtt_influx.py --influx_host=example.host
 ```
 
 If you are on Venus OS < 2.80 you need to `opkg install python3` and a bunch
 of dependencies (paho-mqtt, influx packages).
+
+Alternatively a template service is provided which you can install by running
+```
+ln -s /data/venus.mqtt-influx/service /service/mqtt-influx
+chmod +x /service/mqtt-influx/run /service/mqtt-influx/log/run
+```
