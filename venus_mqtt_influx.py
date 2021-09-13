@@ -1,3 +1,8 @@
+"""
+Module to read Venus GX messages from the dbus MQTT broker
+and write them to Influx in a format which is easy to
+process for Grafana monitoring.
+"""
 import influxdb
 import paho.mqtt.client as mqtt
 from datetime import datetime
