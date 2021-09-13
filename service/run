@@ -1,0 +1,3 @@
+#!/bin/sh
+python3 /data/venus.mqtt-influx/venus_mqtt_influx.py
+
