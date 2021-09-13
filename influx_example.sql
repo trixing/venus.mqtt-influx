@@ -1,3 +1,5 @@
+-- Default retention to 7 days
+ALTER RETENTION POLICY "autogen" ON "victron" DURATION 7d SHARD DURATION 1d DEFAULT
 -- https://www.neteye-blog.com/2019/12/downsampling-performance-data-in-influxdb/
 -- 7d
 INSERT INTO inf rp_config,idx=1 rp="autogen",start=0i,end=604800000i -9223372036854775806;
