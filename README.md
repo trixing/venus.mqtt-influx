@@ -20,3 +20,33 @@ It has some additional features
 The default 1 second interval produces quite a lot of data. To
 configure your influxdb with a reasonable retention policy and
 aggressive downsampling use the included [Example](./influx_example.sql).
+
+## Installation (Systemd)
+
+On systemd systems, copy the supplied [Unit File](./venus-mqtt-influx.service.example)
+to /etc/systemd/system/ . Optionally edit the file to add command line
+arguments and adapt the installation path.
+
+To start the service, issue
+```
+systemctl daemon-reload
+systemctl start venus-mqtt-influx 
+```
+
+Log output is available with
+```
+journalctl -u venus-mqtt-influx
+```
+
+## Installation (Supervise)
+
+If you want to run the script on the GX device, create a 
+`/service/venus-mqtt-influx/` directory and add the following file
+named `run`:
+```
+#!/bin/sh
+python3 /data/venus-mqtt-influx/venus-mqtt-influx.py --influx_host=example.host
+```
+
+If you are on Venus OS < 2.80 you need to `opkg install python3` and a bunch
+of dependencies (paho-mqtt, influx packages).
