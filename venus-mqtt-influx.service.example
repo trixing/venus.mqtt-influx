@@ -4,7 +4,7 @@ After=multi-user.target
  
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /home/user/venus_mqtt_influx/venus_mqtt_influx.py
+ExecStart=/usr/bin/python3 /home/user/venus.mqtt-influx/venus_mqtt_influx.py
 Restart=always
 StandardOutput=syslog+console
 StandardError=syslog+console
