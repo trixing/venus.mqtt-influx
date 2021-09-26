@@ -45,7 +45,12 @@ class MqttToInflux:
     self._mqtt.on_message = self.on_message
     self._mqtt.on_subscribe = self.on_subscribe
     self._mqtt.connect(mqtt_host, 1883, 60)
-    self._mqtt.loop_forever()
+    try:
+        self._mqtt.loop_forever()
+    except Exception as e:
+        log.error('Exception: %s' % e)
+    finally:
+        sys.exit(1)
 
    def on_connect(self, client, userdata, flags, rc):
     log.info('Connected to mqtt')
