@@ -35,7 +35,9 @@ class MqttToInflux:
     t.daemon = True
     t.start()
 
-    self._influx = influxdb.InfluxDBClient(host=influx_host, port=8086)
+    self._influx = influxdb.InfluxDBClient(
+            host=influx_host, port=8086,
+            timeout=5, retries=1)
     if not self._dryrun:
         self._influx.create_database(influx_db)
         self._influx.switch_database(influx_db)
