@@ -15,30 +15,61 @@ import threading
 import traceback
 import time
 from collections import defaultdict
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 
 log = logging.getLogger('mqtt_to_influx')
 
 
+class Stats(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        if hasattr(self.server, 'data'):
+            self.wfile.write(json.dumps(self.server.data).encode())
+        else:
+            self.wfile.write(json.dumps({"error": "No data defined"}))
+
+
 class MqttToInflux:
    def __init__(self, mqtt_host='127.0.0.1', influx_host='127.0.0.1',
-                influx_db='venus', dryrun=False):
+                influx_db='venus', dryrun=False, stats_port=None):
     self._points = queue.Queue(maxsize=100)
-    self._msg_count = 0
-    self._msg_ignored = 0
-    self._msg_dropped = 0
-    self._msg_fail = 0
     self._msg_seen = set()
+    self._stats = {
+            'msg': {
+                'count': 0,
+                'ignored': 0,
+                'dropped': 0,
+                'failed': 0,
+                },
+            'influx': {
+                'latency': 0,
+                'writes': 0,
+                'failed': 0,
+                },
+    }
     self._dryrun = dryrun
     self._keepalive = set()
     self._active = True
+
+    t = threading.Thread(target=self.safe_keepalive)
+    t.daemon = True
+    t.start()
 
     t = threading.Thread(target=self.safe_write)
     t.daemon = True
     t.start()
 
-    t = threading.Thread(target=self.safe_keepalive)
-    t.daemon = True
-    t.start()
+    if stats_port:
+        server_address = ('', stats_port)
+        self._httpd = HTTPServer(server_address, Stats)
+        self._httpd.data = self._stats
+        t = threading.Thread(target=self._httpd.serve_forever)
+        t.daemon = True
+        t.start()
 
     self._influx = influxdb.InfluxDBClient(
             host=influx_host, port=8086,
@@ -63,6 +94,7 @@ class MqttToInflux:
    def quit(self):
        self._active = False
        self._mqtt.disconnect()
+       self._httpd.shutdown()
 
    def on_connect(self, client, userdata, flags, rc):
     log.info('Connected to mqtt')
@@ -72,7 +104,7 @@ class MqttToInflux:
     log.info('MQTT subscription successful.')
 
    def on_message(self, client, userdata, msg):
-    self._msg_count += 1
+    self._stats['msg']['count'] += 1
     t = msg.topic
     p = t.split('/')
     m = '.'.join(p[4:])
@@ -81,7 +113,7 @@ class MqttToInflux:
         self._keepalive.add(t)
     # print(t, m, v, type(v))
     if type(v) not in [float, int]:
-        self._msg_ignored += 1
+        self._stats['msg']['ignored'] += 1
         if type(v) == type(None):
             pass
         elif t not in self._msg_seen:
@@ -108,7 +140,7 @@ class MqttToInflux:
         self._points.put(point, block=False)
     except queue.Full:
         log.error('Queue full, overload? - dropping all')
-        self._msg_dropped += self._points.qsize()
+        self._stats['msg']['dropped'] += self._points.qsize()
         self._points.clear()
 
    def safe_keepalive(self):
@@ -198,15 +230,18 @@ class MqttToInflux:
                     latency = time.time()
                     try:
                         self._influx.write_points(tbw)
+                        self._stats['influx']['writes'] += 1
                     except requests.exceptions.ConnectionError:
                         log.error('Write failure, dropping: %d' % len(tbw))
-                        self._msg_fail += len(tbw)
+                        self._stats['msg']['failed'] += len(tbw)
+                        self._stats['influx']['failed'] += 1
                     latency = time.time() - latency
+                    self._stats['influx']['latency'] = (latency + 9*self._stats['influx']['latency'])/10
                     log.info('Latency %dms' % (latency*1000))
                 else:
                     log.debug('  Skip write due to dryrun.')
                 points = defaultdict(list)
-            log.info('Messages handled: %d, ignored %d, dropped %d, failed %d' % (self._msg_count, self._msg_ignored, self._msg_dropped, self._msg_fail))
+            log.info('Messages handled: %s' % (self._stats['msg']))
 
 def main():
     root = logging.getLogger()
@@ -228,11 +263,14 @@ def main():
     parser.add_argument('--mqtt_host', help='MQTT host to connect to', default='127.0.0.1')
     parser.add_argument('--influx_host', help='Influx host to connect to', default='127.0.0.1')
     parser.add_argument('--influx_db', help='Influx db to connect to', default='venus')
+    parser.add_argument('--port', help='Status report port', default=8071)
 
     args = parser.parse_args()
     if args.dryrun:
         log.warning('Running in dryrun mode')
+
     MqttToInflux(mqtt_host=args.mqtt_host, influx_host=args.influx_host,
-                 influx_db=args.influx_db, dryrun=args.dryrun)
+                 influx_db=args.influx_db, dryrun=args.dryrun,
+                 stats_port=args.port)
 
 main()
