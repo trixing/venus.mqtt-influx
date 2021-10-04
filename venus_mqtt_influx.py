@@ -27,11 +27,11 @@ class MqttToInflux:
     self._dryrun = dryrun
     self._keepalive = set()
 
-    t = threading.Thread(target=self.write)
+    t = threading.Thread(target=self.safe_write)
     t.daemon = True
     t.start()
 
-    t = threading.Thread(target=self.keepalive)
+    t = threading.Thread(target=self.safe_keepalive)
     t.daemon = True
     t.start()
 
@@ -98,6 +98,13 @@ class MqttToInflux:
         log.error('Queue full')
         sys.exit(2)
 
+   def safe_keepalive(self):
+       try:
+           self.keepalive()
+       except Exception as e:
+           log.error('Keepalive Exception %s' % e)
+           sys.exit(3)
+
    def keepalive(self):
        # Wait for the first host to appear, to prevent
        # startup delay.
@@ -108,6 +115,13 @@ class MqttToInflux:
                log.info('Send keepalive to %s' % t)
                self._mqtt.publish(t)
            time.sleep(25)
+
+   def safe_write(self):
+       try:
+           self.write()
+       except Exception as e:
+           log.error('Write Exception %s' % e)
+           sys.exit(4)
 
    def write(self):
       lastwrite = time.time()
