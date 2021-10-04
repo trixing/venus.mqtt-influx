@@ -9,8 +9,10 @@ from datetime import datetime
 import json
 import logging
 import queue
+import requests
 import sys
 import threading
+import traceback
 import time
 from collections import defaultdict
 
@@ -24,9 +26,11 @@ class MqttToInflux:
     self._msg_count = 0
     self._msg_ignored = 0
     self._msg_dropped = 0
+    self._msg_fail = 0
     self._msg_seen = set()
     self._dryrun = dryrun
     self._keepalive = set()
+    self._active = True
 
     t = threading.Thread(target=self.safe_write)
     t.daemon = True
@@ -51,9 +55,14 @@ class MqttToInflux:
     try:
         self._mqtt.loop_forever()
     except Exception as e:
-        log.error('Exception: %s' % e)
+        log.error('Exception: %s' % type(e))
+        traceback.print_exc()
     finally:
-        sys.exit(1)
+        self._active = False
+
+   def quit(self):
+       self._active = False
+       self._mqtt.disconnect()
 
    def on_connect(self, client, userdata, flags, rc):
     log.info('Connected to mqtt')
@@ -98,22 +107,24 @@ class MqttToInflux:
     try:
         self._points.put(point, block=False)
     except queue.Full:
-        log.error('Queue full, overload?')
-        self._msg_dropped += 1
+        log.error('Queue full, overload? - dropping all')
+        self._msg_dropped += self._points.qsize()
+        self._points.clear()
 
    def safe_keepalive(self):
        try:
            self.keepalive()
        except Exception as e:
            log.error('Keepalive Exception %s' % e)
-           sys.exit(3)
+           traceback.print_exc()
+           self.quit()
 
    def keepalive(self):
        # Wait for the first host to appear, to prevent
        # startup delay.
        while not self._keepalive:
            time.sleep(.1)
-       while True:
+       while self._active:
            for t in self._keepalive:
                log.info('Send keepalive to %s' % t)
                self._mqtt.publish(t)
@@ -123,15 +134,16 @@ class MqttToInflux:
        try:
            self.write()
        except Exception as e:
-           log.error('Write Exception %s' % e)
-           sys.exit(4)
+           log.error('Write Exception %s' % type(e))
+           traceback.print_exc()
+           self.quit()
 
    def write(self):
       lastwrite = time.time()
       deduped = 0
       points = defaultdict(list)
       agg = defaultdict(dict)
-      while True:
+      while self._active:
         now = time.time()
         try:
             p = self._points.get(timeout=1)
@@ -184,13 +196,17 @@ class MqttToInflux:
                 # print(points.keys())
                 if not self._dryrun:
                     latency = time.time()
-                    self._influx.write_points(tbw)
+                    try:
+                        self._influx.write_points(tbw)
+                    except requests.exceptions.ConnectionError:
+                        log.error('Write failure, dropping: %d' % len(tbw))
+                        self._msg_fail += len(tbw)
                     latency = time.time() - latency
                     log.info('Latency %dms' % (latency*1000))
                 else:
                     log.debug('  Skip write due to dryrun.')
                 points = defaultdict(list)
-            log.info('Messages handled: %d, ignored %d, dropped %d' % (self._msg_count, self._msg_ignored, self._msg_dropped))
+            log.info('Messages handled: %d, ignored %d, dropped %d, failed %d' % (self._msg_count, self._msg_ignored, self._msg_dropped, self._msg_fail))
 
 def main():
     root = logging.getLogger()
