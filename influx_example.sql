@@ -22,6 +22,7 @@ CREATE RETENTION POLICY "inf" ON "victron" DURATION INF REPLICATION 1
 
 DROP CONTINUOUS QUERY "cq_30d" ON "victron";
 CREATE CONTINUOUS QUERY "cq_30d" ON "victron"
+-- consider RESAMPLE FOR 5m
 BEGIN
   SELECT mean(value) AS "value" INTO "victron"."30d".:MEASUREMENT FROM "autogen"./.*/ GROUP BY time(60s), instanceNumber, path, portalId
 END;
