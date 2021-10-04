@@ -20,9 +20,10 @@ log = logging.getLogger('mqtt_to_influx')
 class MqttToInflux:
    def __init__(self, mqtt_host='127.0.0.1', influx_host='127.0.0.1',
                 influx_db='venus', dryrun=False):
-    self._points = queue.Queue(maxsize=10000)
+    self._points = queue.Queue(maxsize=100)
     self._msg_count = 0
     self._msg_ignored = 0
+    self._msg_dropped = 0
     self._msg_seen = set()
     self._dryrun = dryrun
     self._keepalive = set()
@@ -97,8 +98,8 @@ class MqttToInflux:
     try:
         self._points.put(point, block=False)
     except queue.Full:
-        log.error('Queue full')
-        sys.exit(2)
+        log.error('Queue full, overload?')
+        self._msg_dropped += 1
 
    def safe_keepalive(self):
        try:
@@ -189,7 +190,7 @@ class MqttToInflux:
                 else:
                     log.debug('  Skip write due to dryrun.')
                 points = defaultdict(list)
-            log.info('Messages handled: %d, Messages ignored %d' % (self._msg_count, self._msg_ignored))
+            log.info('Messages handled: %d, ignored %d, dropped %d' % (self._msg_count, self._msg_ignored, self._msg_dropped))
 
 def main():
     root = logging.getLogger()
