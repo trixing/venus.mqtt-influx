@@ -231,8 +231,8 @@ class MqttToInflux:
                     try:
                         self._influx.write_points(tbw)
                         self._stats['influx']['writes'] += 1
-                    except requests.exceptions.ConnectionError:
-                        log.error('Write failure, dropping: %d' % len(tbw))
+                    except requests.exceptions.RequestException as e:
+                        log.error('Write failure %s, dropping: %d' % (type(e), len(tbw)))
                         self._stats['msg']['failed'] += len(tbw)
                         self._stats['influx']['failed'] += 1
                     latency = time.time() - latency
