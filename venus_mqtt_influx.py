@@ -121,7 +121,9 @@ class MqttToInflux:
     if t.endswith('system/0/Serial'):
         self._keepalive.add(t)
     # print(t, m, v, type(v))
-    if type(v) not in [float, int]:
+    if type(v) in [float, int, bool]:
+        v = float(v)
+    else:
         self._stats['msg']['ignored'] += 1
         if type(v) == type(None):
             pass
@@ -145,10 +147,10 @@ class MqttToInflux:
             # text
         }
     }
-    if type(v) in [float, int]:
+    if type(v) == float:
         v = float(v)  # automatic conversion sometimes makes it an int
         point['fields']['value'] = v
-    elif type(v) in [str]:
+    elif type(v) == str:
         point['fields']['text'] = v
 
     try:
