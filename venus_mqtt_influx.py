@@ -63,6 +63,7 @@ class MqttToInflux:
     t.daemon = True
     t.start()
 
+    self._httpd = None
     if stats_port:
         server_address = ('', stats_port)
         self._httpd = HTTPServer(server_address, Stats)
@@ -80,25 +81,33 @@ class MqttToInflux:
 
     self._mqtt = mqtt.Client()
     self._mqtt.on_connect = self.on_connect
+    self._mqtt.on_disconnect = self.on_disconnect
     self._mqtt.on_message = self.on_message
     self._mqtt.on_subscribe = self.on_subscribe
-    self._mqtt.connect(mqtt_host, 1883, 60)
-    try:
-        self._mqtt.loop_forever()
-    except Exception as e:
-        log.error('Exception: %s' % type(e))
-        traceback.print_exc()
-    finally:
-        self._active = False
+
+    while self._active:
+        try:
+            self._mqtt.connect(mqtt_host, 1883, 60)
+            self._mqtt.loop_forever()
+        except Exception as e:
+            log.error('MQTT Exception: %s' % type(e))
+            traceback.print_exc()
+            time.sleep(1)
+
+    self.quit()
 
    def quit(self):
        self._active = False
+       if self._httpd:
+           self._httpd.shutdown()
        self._mqtt.disconnect()
-       self._httpd.shutdown()
 
    def on_connect(self, client, userdata, flags, rc):
     log.info('Connected to mqtt')
     client.subscribe('N/#')
+
+   def on_disconnect(self, client, userdata, rc):
+    log.info('Disconnected from mqtt')
 
    def on_subscribe(self, client, userdata, flags, rc):
     log.info('MQTT subscription successful.')
@@ -122,7 +131,6 @@ class MqttToInflux:
         else:
             log.debug('Ignoring %s of type %s' % (t, type(v)))
         return
-    v = float(v)  # automatic conversion sometimes makes it an int
     # print(m, v)
     point = {
         "measurement": m,
@@ -133,9 +141,16 @@ class MqttToInflux:
         },
         "time": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
         "fields": {
-            "value": v
+            # value
+            # text
         }
-        }
+    }
+    if type(v) in [float, int]:
+        v = float(v)  # automatic conversion sometimes makes it an int
+        point['fields']['value'] = v
+    elif type(v) in [str]:
+        point['fields']['text'] = v
+
     try:
         self._points.put(point, block=False)
     except queue.Full:
@@ -149,18 +164,26 @@ class MqttToInflux:
        except Exception as e:
            log.error('Keepalive Exception %s' % e)
            traceback.print_exc()
-           self.quit()
+       self.quit()
 
    def keepalive(self):
        # Wait for the first host to appear, to prevent
        # startup delay.
        while not self._keepalive:
            time.sleep(.1)
+       n = 0
+       interval = 30
        while self._active:
            for t in self._keepalive:
                log.info('Send keepalive to %s' % t)
                self._mqtt.publish(t)
-           time.sleep(25)
+           n += 1
+           if n >= 300/interval:
+               n = 0
+               # Disconnect a reconnect, which forces
+               # a publish of all values every 5 minutes.
+               self._mqtt.disconnect()
+           time.sleep(interval)
 
    def safe_write(self):
        try:
@@ -168,7 +191,7 @@ class MqttToInflux:
        except Exception as e:
            log.error('Write Exception %s' % type(e))
            traceback.print_exc()
-           self.quit()
+       self.quit()
 
    def write(self):
       lastwrite = time.time()
@@ -217,14 +240,22 @@ class MqttToInflux:
                 tbw = []
                 duped = 0
                 for k, ms in points.items():
+                    # These are sampled on every datapoint
                     if '.Power.' in k or 'Dc.0.Current' in k or 'Dc.0.Voltage' in k:
                         tbw += ms
                         continue
-                    value = sum(v['fields']['value'] for v in ms) / len(ms)
-                    ms[0]['fields']['value'] = value
+                    # Everything else is aggregated to a mean value
+                    if ms[0]['fields'].get('value', None) is not None:
+                        value = sum(v['fields']['value'] for v in ms) / len(ms)
+                        ms[0]['fields']['value'] = value
+                    elif ms[0]['fields'].get('text', None) is not None:
+                        # Don't need to do anything, just take the first value
+                        # TODO(jdi): Should be mode probably.
+                        pass
                     duped += len(ms) - 1
                     tbw.append(ms[0])
-                log.info('Write %d points (across %d unique measurements), Deduped %d, Interval %.3fs' % (len(tbw), len(points), duped, interval))
+                log.info('Write %d points (across %d unique measurements), Deduped %d, Interval %.3fs' % (
+                    len(tbw), len(points), duped, interval))
                 # print(points.keys())
                 if not self._dryrun:
                     latency = time.time()
