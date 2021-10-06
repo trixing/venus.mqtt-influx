@@ -32,6 +32,10 @@ class Stats(BaseHTTPRequestHandler):
         else:
             self.wfile.write(json.dumps({"error": "No data defined"}))
 
+    def log_message(self, format, *args):
+        log.info("%s - %s" % (
+            self.address_string(), format%args))
+
 
 class MqttToInflux:
    def __init__(self, mqtt_host='127.0.0.1', influx_host='127.0.0.1',
