@@ -37,7 +37,26 @@ class Stats(BaseHTTPRequestHandler):
             self.address_string(), format%args))
 
 
+TOPICS = (
+        '/Ac/Power',
+        '/Current',
+        '/Dc/0/Power',
+        '/Soc',
+        '/Temperature',
+        '/Voltage',
+        '/Yield/Power',
+        '/Yield/User',
+        '/Yield/System',
+
+)
 class MqttToInflux:
+   def allowed(self, topic):
+     return (
+        topic and any(
+        topic.endswith(t) for t in TOPICS
+     ))
+
+     
    def __init__(self, mqtt_host='127.0.0.1', influx_host='127.0.0.1',
                 influx_db='venus', dryrun=False, stats_port=None):
     self._points = queue.Queue(maxsize=100)
@@ -121,11 +140,21 @@ class MqttToInflux:
     t = msg.topic
     p = t.split('/')
     m = '.'.join(p[4:])
-    v = json.loads(msg.payload)['value']
+    if msg.payload:
+        j = json.loads(msg.payload)
+        if type(j) == dict and 'value' in j:
+           v = j['value']
+        else:
+           v = None
+    else:
+        v = None
     if t.endswith('system/0/Serial'):
-        self._keepalive.add(t)
+        # unused, ignore
+        return
+    elif t.endswith('keepalive'):
+        self._keepalive.add('R' + t[1:])
     # print(t, m, v, type(v))
-    if type(v) in [float, int, bool]:
+    if type(v) in [float, int, bool] and self.allowed(t):
         v = float(v)
     else:
         self._stats['msg']['ignored'] += 1
@@ -142,7 +171,7 @@ class MqttToInflux:
         "measurement": m,
         "tags": {
             "path": p[2],
-            "instanceNumber": p[3],
+            "instanceNumber": p[3] if len(p) > 3 else "",
             "portalId": p[1]
         },
         "time": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
@@ -182,6 +211,7 @@ class MqttToInflux:
        while self._active:
            for t in self._keepalive:
                log.info('Send keepalive to %s' % t)
+               #self._mqtt.publish(t, json.dumps(['+']))
                self._mqtt.publish(t)
            n += 1
            if n >= 300/interval:
