@@ -41,10 +41,18 @@ class Stats(BaseHTTPRequestHandler):
 TOPICS = (
         '/Ac/Power',
         '/Current',
+        '/CustomName',
         '/Dc/0/Power',
+        '/Dc/Battery/Soc',
         '/Energy/Forward',
         '/Energy/Reverse',
-        '/Soc',
+        '/Info/BatteryLowVoltage',
+        '/Info/MaxChargeCurrent',
+        '/Info/MaxChargeVoltage',
+        '/Info/MaxDischargeCurrent',
+        '/Pv/I',
+        '/Pv/V',
+        '/ProductName',
         '/Temperature',
         '/Voltage',
         '/Yield/Power',
@@ -168,6 +176,8 @@ class MqttToInflux:
     # print(t, m, v, type(v))
     if type(v) in [float, int, bool] and self.allowed(t):
         v = float(v)
+    elif type(v) in [str] and self.allowed(t):
+        pass
     else:
         self._stats['msg']['ignored'] += 1
         if type(v) == type(None):
