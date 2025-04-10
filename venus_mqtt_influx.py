@@ -45,7 +45,6 @@ class Stats(BaseHTTPRequestHandler):
 
 
 TOPICS = (
-        '/Ac/Power',
         '/Current',
         '/CustomName',
         '/Dc/0/Power',
@@ -56,12 +55,12 @@ TOPICS = (
         '/Info/MaxChargeCurrent',
         '/Info/MaxChargeVoltage',
         '/Info/MaxDischargeCurrent',
+        '/Power',
         '/Pv/I',
         '/Pv/V',
         '/ProductName',
         '/Temperature',
         '/Voltage',
-        '/Yield/Power',
         '/Yield/User',
         '/Yield/System',
 
@@ -178,18 +177,11 @@ class MqttToInflux:
     else:
         v = None
     if t.endswith('system/0/Serial'):
-<<<<<<< HEAD
-        # unused, ignore
-        return
-    elif t.endswith('keepalive'):
-        self._keepalive.add('R' + t[1:])
-=======
         self._keepalive.add('R/' + v + '/system/0/Serial')
         return
     elif t.endswith('keepalive'):
        # self._keepalive.add('R' + t[1:])
        return
->>>>>>> gx/main
     # print(t, m, v, type(v))
     if type(v) in [float, int, bool] and self.allowed(t):
         v = float(v)
@@ -253,7 +245,7 @@ class MqttToInflux:
                #self._mqtt.publish(t, json.dumps(['+']))
                self._mqtt.publish(t)
            n += 1
-           if n >= 300/interval:
+           if n >= (3600/interval):
                n = 0
                # Disconnect a reconnect, which forces
                # a publish of all values every 5 minutes.
