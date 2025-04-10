@@ -11,7 +11,7 @@ except ImportError:
   pass
 
 import paho.mqtt.client as mqtt
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
 import queue
@@ -104,7 +104,7 @@ class MqttToInflux:
      
    def __init__(self, mqtt_host='127.0.0.1', influx_host='127.0.0.1',
                 influx_db='venus', dryrun=False, stats_port=None):
-    self._points = queue.Queue(maxsize=100)
+    self._points = queue.Queue(maxsize=1000)
     self._msg_seen = set()
     self._stats = {
             'msg': {
@@ -201,9 +201,8 @@ class MqttToInflux:
         self._keepalive.add('R/' + v + '/system/0/Serial')
         return
     elif t.endswith('keepalive'):
-       # self._keepalive.add('R' + t[1:])
        return
-    # print(t, m, v, type(v))
+
     if type(v) in [float, int, bool] and self.allowed(t):
         v = float(v)
     elif type(v) in [str] and self.allowed(t):
@@ -282,10 +281,16 @@ class MqttToInflux:
        self.quit()
 
    def write(self):
-      lastwrite = time.time()
       deduped = 0
+      unchanged = 0
       points = defaultdict(list)
       agg = defaultdict(dict)
+      changed = dict()
+      timer = datetime.utcnow()
+      timer = timer - timedelta(seconds=timer.second % INTERVAL,
+                             microseconds=timer.microsecond)
+      timer = timer + timedelta(seconds=INTERVAL)
+      unchanged_timer = timer + timedelta(hours=1)
       while self._active:
         now = time.time()
         try:
@@ -321,15 +326,23 @@ class MqttToInflux:
             points[k].append(p)
         except queue.Empty:
             pass
-        if now - lastwrite > INTERVAL:
+
+        now = datetime.utcnow()
+        if unchanged_timer <= now:
+            unchanged_timer = timer + timedelta(hours=1)
+            changed = dict()
+            log.info('Flush unchanged cache')
+
+        if timer <= now:
             # this is slightly wrong and should be corrected by INTERVAL/2
             # also it would be nice to run this on a full 10s interval
-            dt = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-            interval = now - lastwrite
-            lastwrite = now
+            interval = now - timer
+            dt = timer.strftime('%Y-%m-%dT%H:%M:%SZ')
+            timer = timer + timedelta(seconds=INTERVAL, microseconds=0)
             if points:
                 tbw = []
                 duped = 0
+                unchanged = 0
                 for k, ms in points.items():
                     # These are sampled on every datapoint
                     #if '.Power.' in k or 'Dc.0.Current' in k or 'Dc.0.Voltage' in k:
@@ -342,12 +355,17 @@ class MqttToInflux:
                     elif ms[0]['fields'].get('text', None) is not None:
                         # Don't need to do anything, just take the first value
                         # TODO(jdi): Should be mode probably.
+                        value = ms[0]['fields'].get('text', None)
                         pass
                     duped += len(ms) - 1
                     ms[0]['time'] = dt
-                    tbw.append(ms[0])
-                log.info('Write %d points (across %d unique measurements), Deduped %d, Interval %.3fs' % (
-                    len(tbw), len(points), duped, interval))
+                    if k in changed and changed[k] == value:
+                      unchanged += 1
+                    else:
+                      tbw.append(ms[0])
+                      changed[k] = value
+                log.info('Write %d points (across %d unique measurements), Deduped %d, Unchanged %d, Interval %.3fs' % (
+                    len(tbw), len(points), duped, unchanged, interval.total_seconds()))
                 # print(points.keys())
                 if not self._dryrun:
                     latency = time.time()
