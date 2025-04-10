@@ -3,7 +3,13 @@ Module to read Venus GX messages from the dbus MQTT broker
 and write them to Influx in a format which is easy to
 process for Grafana monitoring.
 """
-import influxdb
+INFLUX_SUPPORT=False
+try:
+  import influxdb
+  INFLUX_SUPPORT=True
+except ImportError:
+  pass
+
 import paho.mqtt.client as mqtt
 from datetime import datetime
 import json
@@ -17,6 +23,7 @@ import time
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+INTERVAL=10
 
 log = logging.getLogger('mqtt_to_influx')
 
@@ -40,8 +47,18 @@ class Stats(BaseHTTPRequestHandler):
 TOPICS = (
         '/Ac/Power',
         '/Current',
+        '/CustomName',
         '/Dc/0/Power',
-        '/Soc',
+        '/Dc/Battery/Soc',
+        '/Energy/Forward',
+        '/Energy/Reverse',
+        '/Info/BatteryLowVoltage',
+        '/Info/MaxChargeCurrent',
+        '/Info/MaxChargeVoltage',
+        '/Info/MaxDischargeCurrent',
+        '/Pv/I',
+        '/Pv/V',
+        '/ProductName',
         '/Temperature',
         '/Voltage',
         '/Yield/Power',
@@ -49,7 +66,15 @@ TOPICS = (
         '/Yield/System',
 
 )
+
+
 class MqttToInflux:
+   def write_points(self, tbw):
+     if self._influx:
+       self._influx.write_points(tbw)
+     else:
+       requests.post('https://inv.trixing.net/ingest', json=tbw)
+
    def allowed(self, topic):
      return (
         topic and any(
@@ -95,12 +120,15 @@ class MqttToInflux:
         t.daemon = True
         t.start()
 
-    self._influx = influxdb.InfluxDBClient(
+    if INFLUX_SUPPORT:
+      self._influx = influxdb.InfluxDBClient(
             host=influx_host, port=8086,
             timeout=5, retries=1)
-    if not self._dryrun:
-        self._influx.create_database(influx_db)
-        self._influx.switch_database(influx_db)
+      if not self._dryrun:
+         self._influx.create_database(influx_db)
+         self._influx.switch_database(influx_db)
+    else:
+      self._influx = None
 
     self._mqtt = mqtt.Client()
     self._mqtt.on_connect = self.on_connect
@@ -136,6 +164,7 @@ class MqttToInflux:
     log.info('MQTT subscription successful.')
 
    def on_message(self, client, userdata, msg):
+    #print(msg.topic, msg.payload)
     self._stats['msg']['count'] += 1
     t = msg.topic
     p = t.split('/')
@@ -149,13 +178,23 @@ class MqttToInflux:
     else:
         v = None
     if t.endswith('system/0/Serial'):
+<<<<<<< HEAD
         # unused, ignore
         return
     elif t.endswith('keepalive'):
         self._keepalive.add('R' + t[1:])
+=======
+        self._keepalive.add('R/' + v + '/system/0/Serial')
+        return
+    elif t.endswith('keepalive'):
+       # self._keepalive.add('R' + t[1:])
+       return
+>>>>>>> gx/main
     # print(t, m, v, type(v))
     if type(v) in [float, int, bool] and self.allowed(t):
         v = float(v)
+    elif type(v) in [str] and self.allowed(t):
+        pass
     else:
         self._stats['msg']['ignored'] += 1
         if type(v) == type(None):
@@ -269,7 +308,10 @@ class MqttToInflux:
             points[k].append(p)
         except queue.Empty:
             pass
-        if now - lastwrite > 10:
+        if now - lastwrite > INTERVAL:
+            # this is slightly wrong and should be corrected by INTERVAL/2
+            # also it would be nice to run this on a full 10s interval
+            dt = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
             interval = now - lastwrite
             lastwrite = now
             if points:
@@ -277,9 +319,9 @@ class MqttToInflux:
                 duped = 0
                 for k, ms in points.items():
                     # These are sampled on every datapoint
-                    if '.Power.' in k or 'Dc.0.Current' in k or 'Dc.0.Voltage' in k:
-                        tbw += ms
-                        continue
+                    #if '.Power.' in k or 'Dc.0.Current' in k or 'Dc.0.Voltage' in k:
+                    #   tbw += ms
+                    #    continue
                     # Everything else is aggregated to a mean value
                     if ms[0]['fields'].get('value', None) is not None:
                         value = sum(v['fields']['value'] for v in ms) / len(ms)
@@ -289,6 +331,7 @@ class MqttToInflux:
                         # TODO(jdi): Should be mode probably.
                         pass
                     duped += len(ms) - 1
+                    ms[0]['time'] = dt
                     tbw.append(ms[0])
                 log.info('Write %d points (across %d unique measurements), Deduped %d, Interval %.3fs' % (
                     len(tbw), len(points), duped, interval))
@@ -296,7 +339,7 @@ class MqttToInflux:
                 if not self._dryrun:
                     latency = time.time()
                     try:
-                        self._influx.write_points(tbw)
+                        self.write_points(tbw)
                         self._stats['influx']['writes'] += 1
                     except requests.exceptions.RequestException as e:
                         log.error('Write failure %s, dropping: %d' % (type(e), len(tbw)))
@@ -338,6 +381,6 @@ def main():
 
     MqttToInflux(mqtt_host=args.mqtt_host, influx_host=args.influx_host,
                  influx_db=args.influx_db, dryrun=args.dryrun,
-                 stats_port=args.port)
+                 stats_port=int(args.port))
 
 main()
