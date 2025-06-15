@@ -93,7 +93,7 @@ class MqttToInflux:
      if self._influx:
        self._influx.write_points(tbw)
      else:
-       requests.post('https://inv.trixing.net/ingest', json=tbw)
+       requests.post('https://inv.trixing.net/ingest', json=tbw, timeout=5)
 
    def allowed(self, topic):
      return (
@@ -150,7 +150,7 @@ class MqttToInflux:
     else:
       self._influx = None
 
-    self._mqtt = mqtt.Client()
+    self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
     self._mqtt.on_connect = self.on_connect
     self._mqtt.on_disconnect = self.on_disconnect
     self._mqtt.on_message = self.on_message
