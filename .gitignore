@@ -1,0 +1,4 @@
+ignore*txt
+*~
+dev.sh
+*_dev.py
