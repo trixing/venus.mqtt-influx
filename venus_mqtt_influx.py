@@ -93,7 +93,7 @@ class MqttToInflux:
      if self._influx:
        self._influx.write_points(tbw)
      else:
-       requests.post('https://inv.trixing.net/ingest', json=tbw)
+       requests.post('https://inv.trixing.net/ingest', json=tbw, timeout=5)
 
    def allowed(self, topic):
      return (
