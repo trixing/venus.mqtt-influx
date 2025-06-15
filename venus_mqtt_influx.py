@@ -1,21 +1,16 @@
 """
 Module to read Venus GX messages from the dbus MQTT broker
-and write them to Influx in a format which is easy to
-process for Grafana monitoring.
+and write them to a server to process.
 """
-INFLUX_SUPPORT=False
-try:
-  import influxdb
-  INFLUX_SUPPORT=True
-except ImportError:
-  pass
 
 import paho.mqtt.client as mqtt
 from datetime import datetime, timedelta
 import json
 import logging
+import os
 import queue
 import requests
+import socket
 import sys
 import threading
 import traceback
@@ -25,7 +20,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 INTERVAL=10
 
-log = logging.getLogger('mqtt_to_influx')
+log = logging.getLogger('mqtt_to_ingest')
 
 
 class Stats(BaseHTTPRequestHandler):
@@ -88,12 +83,9 @@ TOPICS = (
 )
 
 
-class MqttToInflux:
+class MqttToIngest:
    def write_points(self, tbw):
-     if self._influx:
-       self._influx.write_points(tbw)
-     else:
-       requests.post('https://inv.trixing.net/ingest', json=tbw, timeout=5)
+     requests.post(self._url, json=tbw, headers={'Token': self._token}, timeout=5)
 
    def allowed(self, topic):
      return (
@@ -102,8 +94,8 @@ class MqttToInflux:
      ))
 
      
-   def __init__(self, mqtt_host='127.0.0.1', influx_host='127.0.0.1',
-                influx_db='venus', dryrun=False, stats_port=None):
+   def __init__(self, mqtt_host='127.0.0.1', ingest_host='127.0.0.1',
+                token='unset', dryrun=False, stats_port=None):
     self._points = queue.Queue(maxsize=1000)
     self._msg_seen = set()
     self._stats = {
@@ -113,11 +105,12 @@ class MqttToInflux:
                 'dropped': 0,
                 'failed': 0,
                 },
-            'influx': {
+            'ingest': {
                 'latency': 0,
                 'writes': 0,
                 'failed': 0,
                 },
+            'report': datetime.utcnow()
     }
     self._dryrun = dryrun
     self._keepalive = set()
@@ -140,15 +133,8 @@ class MqttToInflux:
         t.daemon = True
         t.start()
 
-    if INFLUX_SUPPORT:
-      self._influx = influxdb.InfluxDBClient(
-            host=influx_host, port=8086,
-            timeout=5, retries=1)
-      if not self._dryrun:
-         self._influx.create_database(influx_db)
-         self._influx.switch_database(influx_db)
-    else:
-      self._influx = None
+    self._url = 'https://%s/ingest' % ingest_host
+    self._token = token
 
     self._mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
     self._mqtt.on_connect = self.on_connect
@@ -371,13 +357,13 @@ class MqttToInflux:
                     latency = time.time()
                     try:
                         self.write_points(tbw)
-                        self._stats['influx']['writes'] += 1
+                        self._stats['ingest']['writes'] += 1
                     except requests.exceptions.RequestException as e:
                         log.error('Write failure %s, dropping: %d' % (type(e), len(tbw)))
                         self._stats['msg']['failed'] += len(tbw)
-                        self._stats['influx']['failed'] += 1
+                        self._stats['ingest']['failed'] += 1
                     latency = time.time() - latency
-                    self._stats['influx']['latency'] = (latency + 9*self._stats['influx']['latency'])/10
+                    self._stats['ingest']['latency'] = (latency + 9*self._stats['ingest']['latency'])/10
                     log.info('Latency %dms' % (latency*1000))
                 else:
                     log.debug('  Skip write due to dryrun.')
@@ -398,20 +384,20 @@ def main():
 
     import argparse
     parser = argparse.ArgumentParser(
-            description='Bridge MQTT messages from Venus GX to Influx DB with some smart sampling..')
+            description='Bridge MQTT messages from Venus GX to a compatible HTTP server with some smart sampling..')
     parser.add_argument('--dryrun', action='store_true',
-                        help='do not publish to influx')
+                        help='do not publish values')
     parser.add_argument('--mqtt_host', help='MQTT host to connect to', default='127.0.0.1')
-    parser.add_argument('--influx_host', help='Influx host to connect to', default='127.0.0.1')
-    parser.add_argument('--influx_db', help='Influx db to connect to', default='venus')
+    parser.add_argument('--ingest_host', help='Ingestion host to connect to', default='127.0.0.1')
     parser.add_argument('--port', help='Status report port', default=8071)
+    parser.add_argument('--token', help='Token to authorize ingestion', default=os.getenv('TOKEN', socket.gethostname()))
 
     args = parser.parse_args()
     if args.dryrun:
         log.warning('Running in dryrun mode')
 
-    MqttToInflux(mqtt_host=args.mqtt_host, influx_host=args.influx_host,
-                 influx_db=args.influx_db, dryrun=args.dryrun,
-                 stats_port=int(args.port))
+    MqttToIngest(mqtt_host=args.mqtt_host, ingest_host=args.ingest_host,
+                 token=args.token,
+                 dryrun=args.dryrun, stats_port=int(args.port))
 
 main()
