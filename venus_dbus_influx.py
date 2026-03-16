@@ -33,6 +33,7 @@ sys.path.insert(
 )
 # from vedbus import VeDbusService
 import dbusmonitor
+from vedbus import VeDbusItemImport
 
 
 INTERVAL=30
@@ -57,9 +58,21 @@ class Stats(BaseHTTPRequestHandler):
 
 
 TOPICS = (
-        '/Current',
+        '/Ac/Energy/Forward',
+        '/Ac/Energy/Reverse',
+        '/Ac/L1/Energy/Forward',
+        '/Ac/L1/Energy/Reverse',
+        '/Ac/L2/Energy/Forward',
+        '/Ac/L2/Energy/Reverse',
+        '/Ac/L3/Energy/Forward',
+        '/Ac/L3/Energy/Reverse',
+        #'/Ac/L1/Power',
+        #'/Ac/L2/Power',
+        #'/Ac/L3/Power',
+        '/Ac/Power',
         '/CustomName',
         '/Dc/0/Power',
+        '/Dc/0/Temperature',
         '/Dc/Battery/Soc',
         '/Energy/Forward',
         '/Energy/Reverse',
@@ -85,6 +98,7 @@ TOPICS = (
         '/Pv/V',
         '/ProductName',
         '/SetCurrent',
+        '/Soc',
         '/Status',
         '/System/MaxCellVoltage',
         '/System/MinCellVoltage',
@@ -93,7 +107,7 @@ TOPICS = (
         '/Temperature',
         '/Temperature1',
         '/Temperature2',
-        '/Voltage',
+        '/Yield/Power',
         '/Yield/User',
         '/Yield/System',
 
@@ -107,7 +121,7 @@ class AllDbusMonitor(dbusmonitor.DbusMonitor):
     return True
 
 
-class MqttToIngest:
+class DbusToIngest:
    def write_points(self, tbw):
      requests.post(self._url, json=tbw, headers={'Token': self._token}, timeout=5)
 
@@ -138,7 +152,7 @@ class MqttToIngest:
         "tags": {
             "path": path,
             "instanceNumber": str(deviceInstance),
-            "portalId": "gf"
+            "portalId": self._portal_id,
         },
         "time": datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
         "fields": {
@@ -146,24 +160,28 @@ class MqttToIngest:
             # text
         }
       }
-      if type(v) == float:
+      if type(v) in (float, int):
         v = float(v)  # automatic conversion sometimes makes it an int
         point['fields']['value'] = v
       elif type(v) == str:
         point['fields']['text'] = v
-
       try:
         self._points.put(point, block=False)
       except queue.Full:
         log.error('Queue full, overload? - dropping all')
         self._stats['msg']['dropped'] += self._points.qsize()
 
-   def nameownerchange(self, a, b):
-      print(a,b)        
+   def device_added(self, a, b):
+      print('device added', a, b)
+      pass
+
+   def device_removed(self, a, b):
+      print('device removed', a, b)        
       pass
      
-   def __init__(self, mqtt_host='127.0.0.1', ingest_host='127.0.0.1',
+   def __init__(self, portal_id, ingest_host='127.0.0.1',
                 token='unset', dryrun=False, stats_port=None):
+    self._portal_id = portal_id
     self._points = queue.Queue(maxsize=10000)
     self._msg_seen = set()
     self._stats = {
@@ -206,49 +224,30 @@ class MqttToIngest:
     self._v = {}                                                    
     self._dm = AllDbusMonitor({},                                            
            self.value_changed_on_dbus,                     
-           deviceAddedCallback=self.nameownerchange,                                        
-           deviceRemovedCallback=self.nameownerchange)
+           deviceAddedCallback=self.device_added,                                        
+           deviceRemovedCallback=self.device_removed)
 
     serviceNames = self._dm.dbusConn.list_names()
     serviceNames = set(['.'.join(s.split('.')[0:3]) for s in serviceNames if s.startswith('com.victronenergy.')])
-    print(serviceNames)
-    monitorlist = {}
+    self.monitorlist = {}
     for s in serviceNames:
-      monitorlist[s] = {
-        '/Ac/L1/Power': dummy,
-        '/Ac/L2/Power': dummy,
-        '/Ac/L3/Power': dummy,
-        '/Ac/Power': dummy,
-        '/Dc/0/Power': dummy,
-        '/Dc/0/Temperature': dummy,
-        '/Ac/Energy/Forward': dummy,
-        '/Ac/Energy/Reverse': dummy,
-        '/Ac/L1/Energy/Forward': dummy,
-        '/Ac/L1/Energy/Reverse': dummy,
-        '/Ac/L2/Energy/Forward': dummy,
-        '/Ac/L2/Energy/Reverse': dummy,
-        '/Ac/L3/Energy/Forward': dummy,
-        '/Ac/L3/Energy/Reverse': dummy,
-        '/CustomName': dummy,
-        '/Energy/AcIn1ToAcOut': dummy,
-        '/Energy/AcIn1ToInverter': dummy,
-        '/Energy/AcIn2ToAcOut': dummy,
-        '/Energy/AcIn2ToInverter': dummy,
-        '/Energy/AcOutToAcIn1': dummy,
-        '/Energy/AcOutToAcIn2': dummy,
-        '/Energy/InverterToAcIn1': dummy,
-        '/Energy/InverterToAcIn2': dummy,
-        '/Energy/InverterToAcOut': dummy,
-        '/Temperature': dummy,
-        '/Yield/Power': dummy,
-        '/Yield/User': dummy,
-        '/Yield/System': dummy,
-      }
-    self._dm = AllDbusMonitor(monitorlist,                                            
+      self.monitorlist[s] = dict([(t, dummy) for t in TOPICS])
+    self._dm = AllDbusMonitor(self.monitorlist,                                            
            self.value_changed_on_dbus,                     
-           deviceAddedCallback=self.nameownerchange,                                        
-           deviceRemovedCallback=self.nameownerchange)
+           deviceAddedCallback=self.device_added,
+           deviceRemovedCallback=self.device_removed)
 
+    for service_name, instance in self._dm.get_service_list().items():
+        short_name = '.'.join(service_name.split('.')[:3])
+        if short_name not in self.monitorlist:
+            continue
+        for k in self.monitorlist[short_name]:
+            value = self._dm.get_value(service_name, k, None)
+            if value is not None:
+                log.info('Initial value for %s(%s) %s: %s', service_name, instance, k, value)
+                changes = {'Value': value, 'Text': str(value)}
+                self.value_changed_on_dbus(service_name, k, {}, changes, instance)
+    
     self.timer = datetime.utcnow()
     log.info("Startup finished")
     gobject.timeout_add(INTERVAL*1000, self.safe_write)
@@ -426,7 +425,7 @@ def main():
             description='Bridge MQTT messages from Venus GX to a compatible HTTP server with some smart sampling..')
     parser.add_argument('--dryrun', action='store_true',
                         help='do not publish values')
-    parser.add_argument('--mqtt_host', help='MQTT host to connect to', default='127.0.0.1')
+    parser.add_argument('--portal_id', help='Venus Portal ID for logging')
     parser.add_argument('--ingest_host', help='Ingestion host to connect to', default='127.0.0.1')
     parser.add_argument('--port', help='Status report port', default=8071)
     parser.add_argument('--token', help='Token to authorize ingestion', default=os.getenv('TOKEN', socket.gethostname()))
@@ -439,7 +438,7 @@ def main():
     # Have a mainloop, so we can send/receive asynchronous calls to and from dbus
     DBusGMainLoop(set_as_default=True)
 
-    MqttToIngest(mqtt_host=args.mqtt_host, ingest_host=args.ingest_host,
+    DbusToIngest(portal_id=args.portal_id, ingest_host=args.ingest_host,
                  token=args.token,
                  dryrun=args.dryrun, stats_port=int(args.port))
 
