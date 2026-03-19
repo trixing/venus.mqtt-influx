@@ -1,5 +1,7 @@
 #!/bin/sh
 
-export TOKEN=b173c611-f0b5-4fa8-95bf-ba16ac904ac9
-python3 /data/trixing/venus.mqtt-influx/venus_dbus_influx.py --ingest_host=inv.trixing.net --portal_id=gf
+. /data/trixing/venus.mqtt-influx/config.sh
+
+export TOKEN
+python3 /data/trixing/venus.mqtt-influx/venus_dbus_influx.py --ingest_host="$INGEST_HOST" --portal_id="$PORTAL_ID"
 

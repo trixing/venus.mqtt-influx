@@ -1,0 +1,4 @@
+# copy to config.sh and adjust path in service/run
+TOKEN=my-secret-token
+PORTAL_ID=arbitrary-id
+INGEST_HOST=the-hostname-with-influx-like-api
