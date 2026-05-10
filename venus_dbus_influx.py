@@ -28,6 +28,13 @@ sys.path.insert(
     1,
     os.path.join(
         os.path.dirname(__file__),
+        "./ext/velib_python",
+    ),
+)
+sys.path.insert(
+    1,
+    os.path.join(
+        os.path.dirname(__file__),
         "/opt/victronenergy/dbus-systemcalc-py/ext/velib_python",
     ),
 )
@@ -117,8 +124,9 @@ TOPICS = (
 class AllDbusMonitor(dbusmonitor.DbusMonitor):
 
   def service_wanted(self, serviceName):
-    print('service_wanted', serviceName)
-    return True
+    r = serviceName.startswith('com.victronenergy.')
+    print('service_wanted', serviceName, r)
+    return r
 
 
 class DbusToIngest:
@@ -215,12 +223,6 @@ class DbusToIngest:
     self._token = token
 
     dummy = {'code': None, 'whenToLog': 'onIntervalAlways', 'accessLevel': None}
-    monitor_target='com.victronenergy.battery'
-    monitorlist = {                                        
-                        monitor_target: {                                                    
-                            '/Dc/0/Temperature': dummy,          
-                        },                                      
-                  }                                                              
     self._v = {}                                                    
     self._dm = AllDbusMonitor({},                                            
            self.value_changed_on_dbus,                     
@@ -231,6 +233,7 @@ class DbusToIngest:
     serviceNames = set(['.'.join(s.split('.')[0:3]) for s in serviceNames if s.startswith('com.victronenergy.')])
     self.monitorlist = {}
     for s in serviceNames:
+      print('serviceNames', s)
       self.monitorlist[s] = dict([(t, dummy) for t in TOPICS])
     self._dm = AllDbusMonitor(self.monitorlist,                                            
            self.value_changed_on_dbus,                     
@@ -372,7 +375,7 @@ class DbusToIngest:
                     #    continue
                     # Everything else is aggregated to a mean value
                     if ms[0]['fields'].get('value', None) is not None:
-                        value = sum(v['fields']['value'] for v in ms) / len(ms)
+                        value = sum(v['fields']['value'] for v in ms if 'value' in v['fields']) / len(ms)
                         ms[0]['fields']['value'] = value
                     elif ms[0]['fields'].get('text', None) is not None:
                         # Don't need to do anything, just take the first value
